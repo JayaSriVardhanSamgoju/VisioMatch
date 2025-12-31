@@ -11,23 +11,16 @@ import streamlit.components.v1 as components
 from src.model import ImageEmbeddingModel
 from streamlit_lottie import st_lottie
 
-# =========================================================
-# PAGE CONFIGURATION
-# =========================================================
+
 st.set_page_config(
     page_title="VisioMatch AI | Professional Visual Search",
     page_icon="🔍",
     layout="wide"
 )
 
-# --- CALIBRATION SETTINGS ---
-# Based on your test, 210.93 is an outlier. 190.0 is the safe limit.
 REJECTION_THRESHOLD = 190.0 
 DATA_ROOT = "data/Stanford_Online_Products"
 
-# =========================================================
-# ADVANCED CSS (ANIMATIONS & GLASSMORPHISM)
-# =========================================================
 st.markdown("""
 <style>
 .stApp { background-color: #0B0E14; color: #E0E0E0; }
@@ -57,9 +50,7 @@ html { scroll-behavior: smooth; }
 </style>
 """, unsafe_allow_html=True)
 
-# =========================================================
-# ASSET & ENGINE LOADING
-# =========================================================
+
 def load_lottieurl(url: str):
     try:
         r = requests.get(url, timeout=5)
@@ -79,16 +70,11 @@ def load_engine():
 
 model, index, paths, device = load_engine()
 
-# =========================================================
-# SIDEBAR (Calibration Visualizer)
-# =========================================================
 st.sidebar.header("🛠️ Engine Calibration")
 show_metrics = st.sidebar.toggle("Show Distance Metrics", value=False)
 user_threshold = st.sidebar.slider("Rejection Sensitivity", 100.0, 400.0, REJECTION_THRESHOLD)
 
-# =========================================================
-# HERO SECTION
-# =========================================================
+
 st.markdown(f"""
 <div class="hero-container">
     <div class="app-title" style="font-size:3.8rem;font-weight:900;color:#FF4B4B;">
@@ -98,9 +84,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# =========================================================
-# SEARCH INTERFACE
-# =========================================================
+
 col1, col2 = st.columns([1, 1])
 
 with col1:
@@ -114,9 +98,7 @@ with col2:
 
 st.markdown("<div id='results'></div>", unsafe_allow_html=True)
 
-# =========================================================
-# SEARCH EXECUTION
-# =========================================================
+
 if uploaded_file and search_btn:
     components.html("""<script>window.parent.document.getElementById('results').scrollIntoView({behavior:'smooth'});</script>""", height=0)
 
@@ -174,8 +156,6 @@ if uploaded_file and search_btn:
                 # Path Normalization for Windows
                 full_path = os.path.normpath(os.path.join(DATA_ROOT, paths[idx]))
                 
-                # Confidence Score Calculation (Normalized for viewers)
-                # 0 distance = 100%, 250 distance = 0%
                 conf_score = max(0, 100 - (distances[0][i] / 2.5))
 
                 st.markdown("<div class='product-card'>", unsafe_allow_html=True)
