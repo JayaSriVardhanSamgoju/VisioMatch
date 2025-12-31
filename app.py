@@ -169,4 +169,5 @@ if uploaded_file and search_btn:
                 st.markdown("</div>", unsafe_allow_html=True)
 
 else:
-    st.info("💡 VisioMatch is standing by. Upload a product image to begin neural verification.")
+    st.info("Upload an image to start visual similarity search.")
+
