@@ -3,24 +3,40 @@ import torch
 import faiss
 import pickle
 import os
-import time
 import requests
 from PIL import Image
 from torchvision import transforms
 import streamlit.components.v1 as components
 from src.model import ImageEmbeddingModel
 from streamlit_lottie import st_lottie
+import base64 # Import for Base64 encoding
+import io     # Import for BytesIO
 
-
+# =========================================================
+# PAGE CONFIGURATION
+# =========================================================
 st.set_page_config(
-    page_title="VisioMatch AI | Professional Visual Search",
+    page_title="VisioMatch AI | Hybrid Search Engine",
     page_icon="🔍",
     layout="wide"
 )
 
+# --- CONFIGURATION SETTINGS ---
+# 190.0 is the strict limit based on your previous tests.
 REJECTION_THRESHOLD = 190.0 
 DATA_ROOT = "data/Stanford_Online_Products"
+# Max image size for ImgBB free tier (20MB = 20 * 1024 * 1024 bytes)
+MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024 
 
+# Load ImgBB API Key from Streamlit secrets
+IMGBB_API_KEY = st.secrets.get("IMGBB_API_KEY") 
+if not IMGBB_API_KEY:
+    st.error("Error: ImgBB API Key not found in .streamlit/secrets.toml. Please add it.")
+    st.stop() # Stop the app if API key is missing
+
+# =========================================================
+# ADVANCED CSS (ANIMATIONS & STYLING)
+# =========================================================
 st.markdown("""
 <style>
 .stApp { background-color: #0B0E14; color: #E0E0E0; }
@@ -50,7 +66,9 @@ html { scroll-behavior: smooth; }
 </style>
 """, unsafe_allow_html=True)
 
-
+# =========================================================
+# BACKEND LOADING
+# =========================================================
 def load_lottieurl(url: str):
     try:
         r = requests.get(url, timeout=5)
@@ -70,49 +88,93 @@ def load_engine():
 
 model, index, paths, device = load_engine()
 
-st.sidebar.header("🛠️ Engine Calibration")
-show_metrics = st.sidebar.toggle("Show Distance Metrics", value=False)
-user_threshold = st.sidebar.slider("Rejection Sensitivity", 100.0, 400.0, REJECTION_THRESHOLD)
+# =========================================================
+# IMGBB UPLOAD FUNCTION
+# =========================================================
+def upload_image_to_imgbb(image_bytes: bytes, api_key: str) -> str | None:
+    """Uploads an image to ImgBB and returns its public URL."""
+    if len(image_bytes) > MAX_IMAGE_SIZE_BYTES:
+        st.error(f"Image too large! Max allowed is {MAX_IMAGE_SIZE_BYTES / (1024*1024):.0f}MB.")
+        return None
 
+    try:
+        # Encode image to base64
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
 
+        url = "https://api.imgbb.com/1/upload"
+        payload = {
+            "key": api_key,
+            "image": base64_image,
+            "expiration": 600 # Image will expire in 10 minutes (600 seconds)
+        }
+        
+        response = requests.post(url, data=payload, timeout=30)
+        response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+        
+        result = response.json()
+        if result and result.get("success"):
+            return result["data"]["url"]
+        else:
+            st.error(f"ImgBB upload failed: {result.get('error', {}).get('message', 'Unknown error')}")
+            return None
+    except requests.exceptions.Timeout:
+        st.error("ImgBB upload timed out. Please try again.")
+        return None
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error during ImgBB upload: {e}")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred during ImgBB upload: {e}")
+        return None
+
+# =========================================================
+# HERO SECTION
+# =========================================================
 st.markdown(f"""
 <div class="hero-container">
     <div class="app-title" style="font-size:3.8rem;font-weight:900;color:#FF4B4B;">
         {''.join([f'<span style="animation-delay:{i*0.1}s">{char}</span>' for i, char in enumerate("VisioMatch")])}
     </div>
-    <div class="app-subtitle" style="color:#8B949E; margin-top:10px;">Enterprise-Grade Neural Search Engine</div>
+    <div class="app-subtitle" style="color:#8B949E; margin-top:10px;">End-to-End Neural Product Retrieval Engine</div>
 </div>
 """, unsafe_allow_html=True)
 
-
+# =========================================================
+# SEARCH INTERFACE
+# =========================================================
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    uploaded_file = st.file_uploader("📷 Upload Reference Image", type=["jpg", "png", "jpeg"])
+    uploaded_file = st.file_uploader("📷 Upload Image", type=["jpg", "png", "jpeg"])
+    # Store uploaded file bytes for ImgBB if needed later
+    uploaded_file_bytes = None
     if uploaded_file:
-        st.image(uploaded_file, width=280, caption="User Query")
+        st.image(uploaded_file, width=280, caption="Reference Query")
+        uploaded_file_bytes = uploaded_file.getvalue()
 
 with col2:
-    k = st.select_slider("Results Precision", options=[4, 8, 12, 16], value=8)
-    search_btn = st.button("RUN DEEP VISUAL SCAN")
+    k = st.select_slider("Detection Depth", options=[4, 8, 12, 16], value=8)
+    search_btn = st.button("EXECUTE VISIOMATCH SCAN")
 
-st.markdown("<div id='results'></div>", unsafe_allow_html=True)
+st.markdown("<div id='results_view'></div>", unsafe_allow_html=True)
 
-
+# =========================================================
+# EXECUTION LOGIC (LOCAL -> FAILOVER)
+# =========================================================
 if uploaded_file and search_btn:
-    components.html("""<script>window.parent.document.getElementById('results').scrollIntoView({behavior:'smooth'});</script>""", height=0)
+    # Smooth scroll to results
+    components.html("""<script>window.parent.document.getElementById('results_view').scrollIntoView({behavior:'smooth'});</script>""", height=0)
 
-    # UI Scanning Animation
+    # 1. Scanning UI
     anim_placeholder = st.empty()
     with anim_placeholder.container():
         if lottie_scan:
             st_lottie(lottie_scan, height=280, key="scanning")
         else:
-            st.spinner("🔍 Scanning neural features...")
-        st.markdown("<p style='text-align:center;'>Calculating Euclidean Proximity...</p>", unsafe_allow_html=True)
+            st.spinner("🔍 Deep scanning visual features...")
 
-    # 1. Processing
-    img = Image.open(uploaded_file).convert("RGB")
+    # 2. Online Inference
+    img = Image.open(io.BytesIO(uploaded_file_bytes)).convert("RGB") # Use BytesIO for PIL
     transform = transforms.Compose([
         transforms.Resize(256), transforms.CenterCrop(224), transforms.ToTensor(),
         transforms.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
@@ -120,54 +182,63 @@ if uploaded_file and search_btn:
     with torch.no_grad():
         vec = model(transform(img).unsqueeze(0).to(device)).cpu().numpy().astype("float32")
 
-    # 2. Search
+    # 3. Vector Similarity Search
     distances, indices = index.search(vec, k)
     anim_placeholder.empty()
 
-    # 3. VERIFICATION: Distance Rejection
     best_dist = distances[0][0]
 
-    if best_dist > user_threshold:
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.error("### 🚫 Input Not Recognized")
+    # --- HYBRID LOGIC CHECK ---
+    if best_dist > REJECTION_THRESHOLD:
+        # THE "FAILOVER" STATE (Local Search failed)
+        st.error("### 🚫 Product Not Recognized in Local Catalog")
         st.markdown(f"""
             <div style="background-color: rgba(255, 75, 75, 0.1); padding: 25px; border-radius: 15px; border: 1px solid #FF4B4B;">
-                <h4 style="color: #FF4B4B; margin: 0;">VisioMatch Security Protocol</h4>
-                <p style="margin: 10px 0 0 0; color: #E0E0E0;">
-                    The visual features of this image do not match our enterprise catalog. 
-                    The system detected a distance of <b>{best_dist:.2f}</b>, which exceeds the safety threshold.
+                <h4 style="color: #FF4B4B; margin: 0;">VisioMatch Intelligence</h4>
+                <p style="margin: 10px 0 10px 0; color: #E0E0E0;">
+                    The detected visual distance (<b>{best_dist:.2f}</b>) is too high for our catalog. 
+                    This item appears to be <b>Out-of-Distribution</b>.
+                </p>
+                <hr style="border: 0.5px solid rgba(255,255,255,0.1);">
+                <p style="font-size: 0.9rem; color: #8B949E;">
+                    <b>Global Discovery:</b> Attempting to search this image through the entire web via Google Lens...
                 </p>
             </div>
         """, unsafe_allow_html=True)
+        
+        # Attempt ImgBB upload for automatic Google Lens search
+        with st.spinner("🚀 Uploading image for global search..."):
+            public_img_url = upload_image_to_imgbb(uploaded_file_bytes, IMGBB_API_KEY)
+
+        if public_img_url:
+            lens_url = f"https://lens.google.com/uploadbyurl?url={public_img_url}"
+            st.success("✅ Image uploaded. Redirecting to Google Lens for global matches!")
+            st.markdown(f'<a href="{lens_url}" target="_blank" style="display: inline-block; padding: 12px 20px; background-color: #4CAF50; color: white; border-radius: 8px; text-decoration: none; font-weight: bold;">View Global Matches Instantly</a>', unsafe_allow_html=True)
+        else:
+            st.warning("Could not automatically search Google Lens. Please try uploading to ImgBB manually or check your API key/image size.")
+
+
     else:
-        # Success: Reveal Match Details
+        # THE "FOUND" STATE (Local Search successful)
         img_rel_path = paths[indices[0][0]]
         category = img_rel_path.split('/')[0].replace('_', ' ').title()
         
-        st.markdown(f"### Related images for your search: <span style='color:#FF4B4B;'>{category}</span>", unsafe_allow_html=True)
-        
-        if show_metrics:
-            st.metric("Closest Match Score", f"{best_dist:.2f}", delta="Within Catalog Range")
+        st.success(f"🎯 Visual Match Identified: {category} (Score: {best_dist:.2f})")
 
-        # 4. Results Grid
         cols = st.columns(4)
         for i, idx in enumerate(indices[0]):
             with cols[i % 4]:
-                # Path Normalization for Windows
                 full_path = os.path.normpath(os.path.join(DATA_ROOT, paths[idx]))
-                
-                conf_score = max(0, 100 - (distances[0][i] / 2.5))
+                conf_score = max(0, 100 - (distances[0][i] / 2.5)) # Adjust scaling as needed
 
                 st.markdown("<div class='product-card'>", unsafe_allow_html=True)
                 if os.path.exists(full_path):
                     st.image(Image.open(full_path), use_container_width=True)
-                    st.markdown("**Visual Match Found**")
+                    st.markdown("**Local Catalog Match**")
                     st.progress(int(conf_score))
                 else:
                     st.error("File Path Error")
-                    st.caption(f"Missing: {paths[idx]}")
                 st.markdown("</div>", unsafe_allow_html=True)
 
 else:
-    st.info("Upload an image to start visual similarity search.")
-
+    st.info("💡 VisioMatch is standing by. Upload a product image to begin neural verification.")
